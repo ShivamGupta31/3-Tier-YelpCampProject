@@ -1,0 +1,92 @@
+pipeline {
+    agent any
+    
+    tools {
+        nodejs 'node24'
+    }
+     
+     environment {
+         PATH = "${tool 'SonarQubeScanner'}/bin:${env.PATH}"
+     }
+    stages {
+        stage('Git checkout') {
+            steps {
+             git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/ShivamGupta31/3-Tier-YelpCampProject.git'
+            }
+        }
+        
+        stage('Install Package dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
+        
+        stage('Install dotenv') {
+            steps {
+                sh "npm install dotenv"
+            }
+        }
+        stage('Unit Tests') {
+            steps {
+                sh "npm test"
+            }
+        }
+        
+        stage('Trivy FS Scan') {
+            steps {
+                sh "trivy fs --format table -o fs-report.html ."
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+  
+                sh ''' 
+                  sonar-scanner \
+                    -Dsonar.projectKey=Campground \
+                    -Dsonar.projectName=Campground \
+                    -Dsonar.sources=.
+                '''     
+            }
+        }
+        
+        }
+        
+        stage('Docker Build & tag') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    sh "docker build -t shivamgupta31/camp:latest ."
+                    }
+                }
+            }
+        }
+        
+        stage('Trivy Image Scan') {
+            steps {
+                sh "trivy image --format table -o fs-report.html shivamgupta31/camp:latest"
+            }
+        }
+        
+        stage('Docker Push Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    sh "docker push shivamgupta31/camp:latest"
+                    }
+                }
+            }
+        }
+        
+        stage('Docker Deploy To Dev') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    sh "docker run -d -p 3000:3000 shivamgupta31/camp:latest"
+                    }
+                }
+            }
+        }
+    }
+}

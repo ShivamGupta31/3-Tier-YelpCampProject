@@ -1,0 +1,100 @@
+pipeline {
+    agent any
+    
+    tools {
+        nodejs 'node24'
+    }
+     
+     environment {
+         PATH = "${tool 'SonarQubeScanner'}/bin:${env.PATH}"
+     }
+    stages {
+        stage('Git checkout') {
+            steps {
+             git credentialsId: 'git-cred', url: 'https://github.com/ShivamGupta31/3-Tier-Yelpcamp.git'
+            }
+        }
+        
+        stage('Install Package dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
+        
+        stage('Install dotenv') {
+            steps {
+                sh "npm install dotenv"
+            }
+        }
+        stage('Unit Tests') {
+            steps {
+                sh "npm test"
+            }
+        }
+        
+        stage('Trivy FS Scan') {
+            steps {
+                sh "trivy fs --format table -o fs-report.html ."
+            }
+        }
+        
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+  
+                sh ''' 
+                  sonar-scanner \
+                    -Dsonar.projectKey=Campground \
+                    -Dsonar.projectName=Campground \
+                    -Dsonar.sources=.
+                '''     
+            }
+        }
+        
+        }
+        
+        stage('Docker Build & tag') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    sh "docker build -t shivamgupta31/camps:latest ."
+                    }
+                }
+            }
+        }
+        
+        stage('Trivy Image Scan') {
+            steps {
+                sh "trivy image --format table -o fs-report.html shivamgupta31/camps:latest"
+            }
+        }
+        
+        stage('Docker Push Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    sh "docker push shivamgupta31/camps:latest"
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy to EKS') {
+            steps {
+                withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'EKS-Yelp', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', serverUrl: 'https://4E1BEF7E33C8BF4B5C058EADA7631BE0.gr7.ap-south-1.eks.amazonaws.com']]) {
+                sh "kubectl apply -f Manifests/"
+                sleep 60
+                }
+            }
+        }
+        
+        stage('Verify the Deployment') {
+            steps {
+                withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'EKS-Yelp', contextName: '', credentialsId: 'k8-token', namespace: 'webapps', serverUrl: 'https://4E1BEF7E33C8BF4B5C058EADA7631BE0.gr7.ap-south-1.eks.amazonaws.com']]) {
+                sh "kubectl get pods -n webapps"
+                sh "kubectl get svc -n webapps"
+                }
+            }
+        }
+    }
+}
